@@ -221,6 +221,13 @@ public:
         this->size_ = 0;
     }
 
+    void reserve(size_t n) {
+        if (this->capacity_ >= n) {
+            return;
+        }
+        this->growAndRehash(n);
+    }
+
     size_t size() const {
         return this->size_;
     }
@@ -370,12 +377,22 @@ private:
     }
 
     void growAndRehash(size_t newCapacity) {
+        if (newCapacity <= this->capacity_) {
+            return;
+        }
+
+        // Temporary new table to move existing elements into
         HashMap<K, V, Hash, Eq> newTable(newCapacity);
-        for (size_t i = 0; i < this->capacity_; ++i) {
-            if (!detail::IsFree(this->metadata_[i])) {
-                newTable.insertUnchecked(std::move(this->slots_[i]));
+
+        if (!this->empty()) {
+            for (size_t i = 0; i < this->capacity_; ++i) {
+                if (!detail::IsFree(this->metadata_[i])) {
+                    newTable.insertUnchecked(std::move(this->slots_[i]));
+                }
             }
         }
+
+        // Swap internals with temporary table
         *this = std::move(newTable);
     }
 
