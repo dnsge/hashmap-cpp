@@ -52,9 +52,7 @@ template <typename K, typename V, typename Hash = std::hash<K>, typename Eq = st
 class HashMap {
     static constexpr size_t DefaultInitialCapacity = 16;
     static constexpr float MaxLoadFactor = 0.875;
-
-    static_assert(std::is_copy_assignable_v<K>, "Key must be trivially copyable");
-    static_assert(std::is_trivially_destructible_v<K>, "Key must be trivially destructible");
+    static constexpr float MaxDeletedLoadFactor = 0.5;
 
 public:
     struct Slot {
@@ -62,6 +60,7 @@ public:
         V value;
     };
 
+    static_assert(std::is_copy_assignable_v<K>, "Key must be copy assignable");
     static_assert(std::is_move_constructible_v<Slot>, "Slot must be move constructable");
 
     template <typename SlotType>
@@ -103,7 +102,8 @@ public:
     HashMap(size_t initialCapacity)
         : capacity_(initialCapacity)
         , size_(0)
-        , slots_(initialCapacity) {
+        , slots_(initialCapacity)
+        , deletedCount_(0) {
         this->metadata_.resize(initialCapacity, detail::Metadata::Empty);
     }
 
@@ -125,9 +125,11 @@ public:
         : capacity_(other.capacity_)
         , size_(other.size_)
         , metadata_(std::move(other.metadata_))
-        , slots_(std::move(other.slots_)) {
+        , slots_(std::move(other.slots_))
+        , deletedCount_(other.deletedCount_) {
         other.capacity_ = 0;
         other.size_ = 0;
+        other.deletedCount_ = 0;
     }
 
     HashMap &operator=(HashMap &&other) noexcept {
@@ -135,8 +137,10 @@ public:
         this->size_ = other.size_;
         this->metadata_ = std::move(other.metadata_);
         this->slots_ = std::move(other.slots_);
+        this->deletedCount_ = other.deletedCount_;
         other.capacity_ = 0;
         other.size_ = 0;
+        other.deletedCount_ = 0;
         return *this;
     }
 
@@ -188,24 +192,26 @@ public:
     }
 
     bool erase(iterator it) {
-        assert(it != this->end());
+        if (it == this->end()) {
+            return false;
+        }
         assert(it.idex_ < this->capacity_);
-        // Mark slot as deleted
-        this->metadata_[it.idex_] = detail::Metadata::Deleted;
-        // Call destructor on slot entry
-        this->slots_[it.idex_].~Slot();
+        // Delete data associated with key-value pair
+        this->deleteSlot(it.idex_);
         // Decrement size
         this->size_ -= 1;
+
+        // Check if we have an elevated number of deleted slots.
+        // If so, we want to rehash everything to prevent fragmentation.
+        if (this->needRehash()) {
+            this->rehashEverything();
+        }
+
         return true;
     }
 
     bool erase(const K &key) {
-        auto it = this->find(key);
-        if (it != this->end()) {
-            this->erase(it);
-            return true;
-        }
-        return false;
+        return this->erase(this->find(key));
     }
 
     void clear() {
@@ -219,6 +225,7 @@ public:
             this->metadata_[i] = detail::Metadata::Empty;
         }
         this->size_ = 0;
+        this->deletedCount_ = 0;
     }
 
     void reserve(size_t n) {
@@ -281,8 +288,7 @@ private:
 
     // Insertion of const lvalue
     std::optional<size_t> insertUnchecked(const std::pair<K, V> &value) {
-        auto loc = this->locationForInsertion(value.first);
-        if (loc) {
+        if (auto loc = this->locationForInsertion(value.first)) {
             // Insert value into slot. Update the metadata with the hash data.
             this->metadata_[loc->idex] = loc->h2;
             // Construct new slot entry in place
@@ -296,8 +302,7 @@ private:
 
     // Insertion of rvalue
     std::optional<size_t> insertUnchecked(std::pair<K, V> &&value) {
-        auto loc = this->locationForInsertion(value.first);
-        if (loc) {
+        if (auto loc = this->locationForInsertion(value.first)) {
             // Insert value into slot. Update the metadata with the hash data.
             this->metadata_[loc->idex] = loc->h2;
             // Construct new slot entry in place, moving the values.
@@ -311,8 +316,7 @@ private:
 
     // Insertion of Slot rvalue. Used when growing the hash table.
     std::optional<size_t> insertUnchecked(Slot &&slot) {
-        auto loc = this->locationForInsertion(slot.key);
-        if (loc) {
+        if (auto loc = this->locationForInsertion(slot.key)) {
             // Insert value into slot. Update the metadata with the hash data.
             this->metadata_[loc->idex] = loc->h2;
             // Move old slot into new slot.
@@ -322,6 +326,14 @@ private:
             return {loc->idex};
         }
         return std::nullopt;
+    }
+
+    void deleteSlot(size_t idex) {
+        // Mark slot as deleted
+        this->metadata_[idex] = detail::Metadata::Deleted;
+        this->deletedCount_ += 1;
+        // Call destructor on slot entry
+        this->slots_[idex].~Slot();
     }
 
     inline iterator iteratorAt(size_t idex) {
@@ -396,16 +408,34 @@ private:
         *this = std::move(newTable);
     }
 
+    void rehashEverything() {
+        if (this->empty()) {
+            return;
+        }
+
+        // Temporary new table to move existing elements into
+        HashMap<K, V, Hash, Eq> newTable(this->capacity_);
+        for (size_t i = 0; i < this->capacity_; ++i) {
+            if (!detail::IsFree(this->metadata_[i])) {
+                newTable.insertUnchecked(std::move(this->slots_[i]));
+            }
+        }
+
+        // Swap internals with temporary table
+        *this = std::move(newTable);
+    }
+
     float loadFactor() const {
         return ((float)this->size_) / this->capacity_;
     }
 
-    float loadFactor(size_t extra) const {
-        return ((float)(this->size_ + extra)) / this->capacity_;
+    bool needToGrowForInsert() const {
+        return this->loadFactor() >= MaxLoadFactor || this->size_ == this->capacity_;
     }
 
-    bool needToGrowForInsert() const {
-        return this->loadFactor(1) >= MaxLoadFactor || this->size_ == this->capacity_;
+    bool needRehash() const {
+        // We have a high number of deleted elements relative to non-deleted elements.
+        return this->deletedCount_ >= (this->size_ * MaxDeletedLoadFactor);
     }
 
     size_t capacity_;
@@ -413,6 +443,8 @@ private:
 
     std::vector<detail::metadata_t> metadata_;
     FixedUninitVec<Slot> slots_;
+
+    size_t deletedCount_;
 };
 
 } // namespace dnsge
