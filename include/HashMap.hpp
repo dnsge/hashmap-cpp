@@ -50,11 +50,11 @@ static_assert(!IsFree(H2(0xFFFF)), "H2 of 0xFFFF should be not be considered fre
 
 template <typename K, typename V, typename Hash = std::hash<K>, typename Eq = std::equal_to<K>>
 class HashMap {
+public:
     static constexpr size_t DefaultInitialCapacity = 16;
     static constexpr float MaxLoadFactor = 0.875;
     static constexpr float MaxDeletedLoadFactor = 0.5;
 
-public:
     using Slot = std::pair<const K, V>;
 
     static_assert(std::is_copy_assignable_v<K>, "Key must be copy assignable");
@@ -93,9 +93,17 @@ public:
     using iterator = MapIterator<Slot>;
     using const_iterator = MapIterator<const Slot>;
 
+    /**
+     * @brief Construct a new HashMap with a default capacity.
+     */
     HashMap()
         : HashMap(DefaultInitialCapacity) {}
 
+    /**
+     * @brief Construct a new HashMap with a specified capacity.
+     * 
+     * @param initialCapacity Initial slot capacity.
+     */
     HashMap(size_t initialCapacity)
         : capacity_(initialCapacity)
         , size_(0)
@@ -141,14 +149,33 @@ public:
         return *this;
     }
 
+    /**
+     * @brief Find a key-value pair in the HashMap.
+     * 
+     * @param key Key to look up.
+     * @return Iterator to the element, or end() if not found.
+     */
     iterator find(const K &key) {
         return this->iteratorAt(this->doFind(key));
     }
 
+    /**
+     * @brief Find a key-value pair in the HashMap.
+     * 
+     * @param key Key to look up.
+     * @return Iterator to the element, or end() if not found.
+     */
     const_iterator find(const K &key) const {
         return this->iteratorAt(this->doFind(key));
     }
 
+    /**
+     * @brief Get the value of a key in the HashMap. Throws std::out_of_range if
+     * the key is not in the HashMap.
+     *
+     * @param key Key to look up.
+     * @return Reference to found value.
+     */
     V &at(const K &key) {
         auto res = this->doFind(key);
         if (res) {
@@ -157,24 +184,45 @@ public:
         throw std::out_of_range("key not found");
     }
 
+    /**
+     * @brief Insert a key-value pair into the HashMap. Returns the iterator to
+     * the inserted key-value pair, or std::nullopt if the key already has a value.
+     * 
+     * @param value Key-value pair to insert.
+     * @return Iterator or std::nullopt if already exists.
+     */
     std::optional<iterator> insert(const std::pair<K, V> &value) {
         // Check if we need to grow
         if (this->needToGrowForInsert()) {
             this->growAndRehash();
         }
         // Perform the insert
-        return iteratorAt(this->insertUnchecked(value));
+        return this->insertUnchecked(value);
     }
 
+    /**
+     * @brief Insert a key-value pair into the HashMap. Returns the iterator to
+     * the inserted key-value pair, or std::nullopt if the key already has a value.
+     * 
+     * @param value Key-value pair to insert.
+     * @return Iterator or std::nullopt if already exists.
+     */
     std::optional<iterator> insert(std::pair<K, V> &&value) {
         // Check if we need to grow
         if (this->needToGrowForInsert()) {
             this->growAndRehash();
         }
         // Perform the insert
-        return iteratorAt(this->insertUnchecked(std::move(value)));
+        return this->insertUnchecked(std::move(value));
     }
 
+    /**
+     * @brief Get the value of a key in the HashMap. If the key is not present,
+     * a default-constructed value is first inserted.
+     * 
+     * @param key Key to look up.
+     * @return Reference to the value.
+     */
     template <typename U = V>
     typename std::enable_if_t<std::is_default_constructible_v<U>, V &> operator[](const K &key) {
         auto res = this->doFind(key);
@@ -182,19 +230,25 @@ public:
             return this->slots_[res.value()].second;
         }
         // Need to insert and then return
-        K keyCopy = key;
-        auto it = this->insert(std::make_pair<K, V>(std::move(keyCopy), V{}));
+        auto it = this->insert(std::make_pair<K, V>(K{key}, V{}));
         assert(it.has_value());
         return this->slots_[it->idex_].second;
     }
 
+    /**
+     * @brief Erase the key-value pair at an iterator. Returns whether the
+     * key-value pair was successfully removed.
+     * 
+     * @param it Iterator to delete
+     * @return Whether the key-value pair was found and removed. 
+     */
     bool erase(iterator it) {
         if (it == this->end()) {
             return false;
         }
         assert(it.idex_ < this->capacity_);
         // Delete data associated with key-value pair
-        this->deleteSlot(it.idex_);
+        this->destroySlot(it.idex_);
         // Decrement size
         --this->size_;
 
@@ -207,10 +261,20 @@ public:
         return true;
     }
 
+    /**
+     * @brief Erase the key-value pair of a key. Returns whether the
+     * key-value pair was successfully removed.
+     * 
+     * @param key Key to erase.
+     * @return Whether the key-value pair was found and removed. 
+     */
     bool erase(const K &key) {
         return this->erase(this->find(key));
     }
 
+    /**
+     * @brief Clear all elements from the HashMap.
+     */
     void clear() {
         if (this->empty()) {
             return;
@@ -225,6 +289,11 @@ public:
         this->deletedCount_ = 0;
     }
 
+    /**
+     * @brief Reserve at least enough empty slots. Does not consider the load factor.
+     * Causes a rehash if growing is required.
+     * @param n Number of slots to reserve.
+     */
     void reserve(size_t n) {
         if (this->capacity_ >= n) {
             return;
@@ -232,32 +301,57 @@ public:
         this->growAndRehash(n);
     }
 
+    /**
+     * @brief Get the number of elements in the HashMap
+     */
     size_t size() const {
         return this->size_;
     }
 
+    /**
+     * @brief Get the slot capacity of the HashMap.
+     */
     size_t capacity() const {
         return this->capacity_;
     }
 
+    /**
+     * @brief Check whether the HashMap is empty.
+     */
     bool empty() const {
         return this->size_ == 0;
     }
 
+    /**
+     * @brief Get an "end" iterator. "end" points to an invalid element and is
+     * returned from HashMap operations as a sentinel value.
+     */
     inline iterator end() {
         return iteratorAt(this->slots_.size());
     }
 
+    /**
+     * @brief Get an "end" iterator. "end" points to an invalid element and is
+     * returned from HashMap operations as a sentinel value.
+     */
     inline const_iterator end() const {
         return iteratorAt(this->slots_.size());
     }
 
 private:
     struct InsertionLoc {
+        // The internal HashMap index
         size_t idex;
+        // The level 2 hash of the key (for metadata)
         size_t h2;
     };
 
+    /**
+     * @brief Compute the internal location for inserting a key.
+     * 
+     * @param key Key for insertion.
+     * @return The insertion location, or std::nullopt if the key already exists.
+     */
     std::optional<InsertionLoc> locationForInsertion(const K &key) const {
         Hash hasher;
         Eq eq;
@@ -279,8 +373,13 @@ private:
         }
     }
 
-    // Insertion of const lvalue
-    std::optional<size_t> insertUnchecked(const std::pair<K, V> &value) {
+    /**
+     * @brief Insert a key-value pair without checking for capacity.
+     * 
+     * @param value Key-value pair to insert.
+     * @return Iterator to the inserted key-value pair, or std::nullopt if key already exists.
+     */
+    std::optional<iterator> insertUnchecked(const std::pair<K, V> &value) {
         if (auto loc = this->locationForInsertion(value.first)) {
             // Insert value into slot. Update the metadata with the hash data.
             this->metadata_[loc->idex] = loc->h2;
@@ -288,13 +387,18 @@ private:
             new (&this->slots_[loc->idex]) Slot{value.first, value.second};
             // Increment size
             ++this->size_;
-            return {loc->idex};
+            return this->iteratorAt(loc->idex);
         }
         return std::nullopt;
     }
 
-    // Insertion of rvalue
-    std::optional<size_t> insertUnchecked(std::pair<K, V> &&value) {
+    /**
+     * @brief Insert a key-value pair without checking for capacity.
+     * 
+     * @param value Key-value pair to insert.
+     * @return Iterator to the inserted key-value pair, or std::nullopt if key already exists.
+     */
+    std::optional<iterator> insertUnchecked(std::pair<K, V> &&value) {
         if (auto loc = this->locationForInsertion(value.first)) {
             // Insert value into slot. Update the metadata with the hash data.
             this->metadata_[loc->idex] = loc->h2;
@@ -302,13 +406,18 @@ private:
             new (&this->slots_[loc->idex]) Slot{std::move(value.first), std::move(value.second)};
             // Increment size
             ++this->size_;
-            return {loc->idex};
+            return this->iteratorAt(loc->idex);
         }
         return std::nullopt;
     }
 
-    // Insertion of Slot rvalue. Used when growing the hash table.
-    std::optional<size_t> insertUnchecked(Slot &&slot) {
+    /**
+     * @brief Insert a slot rvalue.
+     * 
+     * @param slot Slot to insert.
+     * @return Iterator to the inserted slot, or std::nullopt if key already exists.
+     */
+    std::optional<iterator> insertUnchecked(Slot &&slot) {
         if (auto loc = this->locationForInsertion(slot.first)) {
             // Insert value into slot. Update the metadata with the hash data.
             this->metadata_[loc->idex] = loc->h2;
@@ -316,12 +425,17 @@ private:
             new (&this->slots_[loc->idex]) Slot{std::move(slot)};
             // Increment size
             ++this->size_;
-            return {loc->idex};
+            return this->iteratorAt(loc->idex);
         }
         return std::nullopt;
     }
 
-    void deleteSlot(size_t idex) {
+    /**
+     * @brief Destroy the slot at an index. Update the metadata and call the slot destructor.
+     * 
+     * @param idex Index to destroy at.
+     */
+    void destroySlot(size_t idex) {
         // Mark slot as deleted
         this->metadata_[idex] = detail::Metadata::Deleted;
         ++this->deletedCount_;
@@ -329,14 +443,24 @@ private:
         this->slots_[idex].~Slot();
     }
 
+    /**
+     * @brief Get an iterator to an internal HashTable index.
+     */
     inline iterator iteratorAt(size_t idex) {
         return iterator(idex, this->slots_.data() + idex);
     }
 
+    /**
+     * @brief Get an iterator to an internal HashTable index.
+     */
     inline const_iterator iteratorAt(size_t idex) const {
         return const_iterator(idex, this->slots_.data() + idex);
     }
 
+    /**
+     * @brief Get an iterator to an internal HashTable index. Returns iterator to end
+     * if value is not set.
+     */
     inline iterator iteratorAt(std::optional<size_t> maybeIdex) {
         if (maybeIdex) {
             return iteratorAt(*maybeIdex);
@@ -344,6 +468,10 @@ private:
         return this->end();
     }
 
+    /**
+     * @brief Get an iterator to an internal HashTable index. Returns iterator to end
+     * if value is not set.
+     */
     inline const_iterator iteratorAt(std::optional<size_t> maybeIdex) const {
         if (maybeIdex) {
             return iteratorAt(*maybeIdex);
@@ -351,7 +479,12 @@ private:
         return this->end();
     }
 
-    // Performs a find. Returns index to found slot.
+    /**
+     * @brief Find a key in the HashTable.
+     * 
+     * @param key Key to find.
+     * @return Internal HashTable index of key-value, or std::nullopt if not found.
+     */
     std::optional<size_t> doFind(const K &key) const {
         if (this->empty()) {
             return std::nullopt;
@@ -376,6 +509,9 @@ private:
         }
     }
 
+    /**
+     * @brief Double the capacity and rehash the table.
+     */
     void growAndRehash() {
         size_t newCapacity = this->capacity_ * 2;
         if (this->capacity_ == 0) {
@@ -384,6 +520,11 @@ private:
         this->growAndRehash(newCapacity);
     }
 
+    /**
+     * @brief Increase the capacity and rehash the table.
+     * 
+     * @param newCapacity 
+     */
     void growAndRehash(size_t newCapacity) {
         if (newCapacity <= this->capacity_) {
             return;
@@ -409,6 +550,9 @@ private:
         *this = std::move(newTable);
     }
 
+    /**
+     * @brief Rehash the HashTable without changing capacity.
+     */
     void rehashEverything() {
         if (this->empty()) {
             return;
@@ -432,14 +576,23 @@ private:
         *this = std::move(newTable);
     }
 
+    /**
+     * @brief Compute the current load factor.
+     */
     float loadFactor() const {
         return ((float)this->size_) / this->capacity_;
     }
 
+    /**
+     * @brief Check whether the load factor is too high and we must grow for insert.
+     */
     bool needToGrowForInsert() const {
         return this->loadFactor() >= MaxLoadFactor || this->size_ == this->capacity_;
     }
 
+    /**
+     * @brief Check whether we need to rehash due to high number of deleted elements.
+     */
     bool needRehash() const {
         // We have a high number of deleted elements relative to non-deleted elements.
         return this->deletedCount_ >= (this->size_ * MaxDeletedLoadFactor);
