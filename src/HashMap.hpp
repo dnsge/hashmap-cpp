@@ -55,10 +55,7 @@ class HashMap {
     static constexpr float MaxDeletedLoadFactor = 0.5;
 
 public:
-    struct Slot {
-        const K key;
-        V value;
-    };
+    using Slot = std::pair<const K, V>;
 
     static_assert(std::is_copy_assignable_v<K>, "Key must be copy assignable");
     static_assert(std::is_move_constructible_v<Slot>, "Slot must be move constructable");
@@ -155,7 +152,7 @@ public:
     V &at(const K &key) {
         auto res = this->doFind(key);
         if (res) {
-            return this->slots_[res.value()].value;
+            return this->slots_[res.value()].second;
         }
         throw std::out_of_range("key not found");
     }
@@ -178,17 +175,17 @@ public:
         return iteratorAt(this->insertUnchecked(value));
     }
 
-    template <typename = std::enable_if<std::is_default_constructible_v<V>>>
+    template <typename = std::enable_if_t<std::is_default_constructible_v<V>>>
     V &operator[](const K &key) {
         auto res = this->doFind(key);
         if (res) {
-            return this->slots_[res.value()].value;
+            return this->slots_[res.value()].second;
         }
         // Need to insert and then return
         K keyCopy = key;
         auto it = this->insert(std::make_pair<K, V>(std::move(keyCopy), V{}));
         assert(it.has_value());
-        return this->slots_[it->idex_].value;
+        return this->slots_[it->idex_].second;
     }
 
     bool erase(iterator it) {
@@ -199,7 +196,7 @@ public:
         // Delete data associated with key-value pair
         this->deleteSlot(it.idex_);
         // Decrement size
-        this->size_ -= 1;
+        --this->size_;
 
         // Check if we have an elevated number of deleted slots.
         // If so, we want to rehash everything to prevent fragmentation.
@@ -278,7 +275,7 @@ private:
             if (detail::IsFree(metadata)) {
                 // Found free spot for insertion
                 return InsertionLoc{idex, h2};
-            } else if (metadata == h2 && eq(key, this->slots_[idex].key)) {
+            } else if (metadata == h2 && eq(key, this->slots_[idex].first)) {
                 // Key already exists
                 return std::nullopt;
             }
@@ -294,7 +291,7 @@ private:
             // Construct new slot entry in place
             new (&this->slots_[loc->idex]) Slot{value.first, value.second};
             // Increment size
-            this->size_ += 1;
+            ++this->size_;
             return {loc->idex};
         }
         return std::nullopt;
@@ -308,7 +305,7 @@ private:
             // Construct new slot entry in place, moving the values.
             new (&this->slots_[loc->idex]) Slot{std::move(value.first), std::move(value.second)};
             // Increment size
-            this->size_ += 1;
+            ++this->size_;
             return {loc->idex};
         }
         return std::nullopt;
@@ -316,13 +313,13 @@ private:
 
     // Insertion of Slot rvalue. Used when growing the hash table.
     std::optional<size_t> insertUnchecked(Slot &&slot) {
-        if (auto loc = this->locationForInsertion(slot.key)) {
+        if (auto loc = this->locationForInsertion(slot.first)) {
             // Insert value into slot. Update the metadata with the hash data.
             this->metadata_[loc->idex] = loc->h2;
             // Move old slot into new slot.
             new (&this->slots_[loc->idex]) Slot{std::move(slot)};
             // Increment size
-            this->size_ += 1;
+            ++this->size_;
             return {loc->idex};
         }
         return std::nullopt;
@@ -331,7 +328,7 @@ private:
     void deleteSlot(size_t idex) {
         // Mark slot as deleted
         this->metadata_[idex] = detail::Metadata::Deleted;
-        this->deletedCount_ += 1;
+        ++this->deletedCount_;
         // Call destructor on slot entry
         this->slots_[idex].~Slot();
     }
@@ -369,7 +366,7 @@ private:
         size_t idex = h1 % this->capacity_;
         while (true) {
             auto metadata = this->metadata_[idex];
-            if (metadata == h2 && eq(key, this->slots_[idex].key)) {
+            if (metadata == h2 && eq(key, this->slots_[idex].first)) {
                 // Found key
                 return idex;
             } else if (metadata == detail::Metadata::Empty) {
@@ -399,7 +396,12 @@ private:
         if (!this->empty()) {
             for (size_t i = 0; i < this->capacity_; ++i) {
                 if (!detail::IsFree(this->metadata_[i])) {
+                    // Move slot data into new table
                     newTable.insertUnchecked(std::move(this->slots_[i]));
+                    // Call destructor on residual slot
+                    this->slots_[i].~Slot();
+                    // Decrement size to avoid additional cleanup when *this is dropped
+                    --this->size_;
                 }
             }
         }
@@ -417,7 +419,12 @@ private:
         HashMap<K, V, Hash, Eq> newTable(this->capacity_);
         for (size_t i = 0; i < this->capacity_; ++i) {
             if (!detail::IsFree(this->metadata_[i])) {
+                // Move slot data into new table
                 newTable.insertUnchecked(std::move(this->slots_[i]));
+                // Call destructor on residual slot
+                this->slots_[i].~Slot();
+                // Decrement size to avoid additional cleanup when *this is dropped
+                --this->size_;
             }
         }
 
