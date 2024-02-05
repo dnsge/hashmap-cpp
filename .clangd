@@ -1,0 +1,10 @@
+If:
+  PathExclude: include/.*
+CompileFlags:
+  Add: [-std=c++17, -Werror, -Wextra, -pedantic, -Wall, -Wno-deprecated, -I./include]
+  CompilationDatabase: compile_commands.json
+Diagnostics:
+  UnusedIncludes: Strict
+  MissingIncludes: Strict
+  Includes:
+    IgnoreHeader: glm/.*
