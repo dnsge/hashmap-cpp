@@ -118,6 +118,9 @@ public:
         }
     }
 
+    HashMap(const HashMap &other) = default;
+    HashMap &operator=(const HashMap &other) = default;
+
     HashMap(HashMap &&other) noexcept
         : capacity_(other.capacity_)
         , size_(other.size_)
@@ -171,6 +174,19 @@ public:
         return iteratorAt(this->insertUnchecked(value));
     }
 
+    template <typename = std::enable_if<std::is_default_constructible_v<V>>>
+    V &operator[](const K &key) {
+        auto res = this->doFind(key);
+        if (res) {
+            return this->slots_[res.value()].value;
+        }
+        // Need to insert and then return
+        K keyCopy = key;
+        auto it = this->insert(std::make_pair<K, V>(std::move(keyCopy), V{}));
+        assert(it.has_value());
+        return this->slots_[it->idex_].value;
+    }
+
     bool erase(iterator it) {
         assert(it != this->end());
         assert(it.idex_ < this->capacity_);
@@ -190,6 +206,19 @@ public:
             return true;
         }
         return false;
+    }
+
+    void clear() {
+        if (this->empty()) {
+            return;
+        }
+        for (size_t i = 0; i < this->capacity_; ++i) {
+            if (!detail::IsFree(this->metadata_[i])) {
+                this->slots_[i].~Slot(); // Destroy slot entry
+            }
+            this->metadata_[i] = detail::Metadata::Empty;
+        }
+        this->size_ = 0;
     }
 
     size_t size() const {
@@ -337,15 +366,17 @@ private:
         if (this->capacity_ == 0) {
             newCapacity = DefaultInitialCapacity;
         }
-        HashMap<K, V, Hash, Eq> newTable(newCapacity);
+        this->growAndRehash(newCapacity);
+    }
 
+    void growAndRehash(size_t newCapacity) {
+        HashMap<K, V, Hash, Eq> newTable(newCapacity);
         for (size_t i = 0; i < this->capacity_; ++i) {
             if (!detail::IsFree(this->metadata_[i])) {
                 newTable.insertUnchecked(std::move(this->slots_[i]));
             }
         }
-
-        std::swap(*this, newTable);
+        *this = std::move(newTable);
     }
 
     float loadFactor() const {
