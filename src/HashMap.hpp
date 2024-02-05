@@ -12,8 +12,7 @@
 #include <utility>
 #include <vector>
 
-constexpr size_t DefaultInitialCapacity = 16;
-constexpr float MaxLoadFactor = 0.875;
+namespace dnsge {
 
 namespace detail {
 
@@ -51,6 +50,9 @@ static_assert(!IsFree(H2(0xFFFF)), "H2 of 0xFFFF should be not be considered fre
 
 template <typename K, typename V, typename Hash = std::hash<K>, typename Eq = std::equal_to<K>>
 class HashMap {
+    static constexpr size_t DefaultInitialCapacity = 16;
+    static constexpr float MaxLoadFactor = 0.875;
+
     static_assert(std::is_copy_assignable_v<K>, "Key must be trivially copyable");
     static_assert(std::is_trivially_destructible_v<K>, "Key must be trivially destructible");
 
@@ -364,3 +366,5 @@ private:
     std::vector<detail::metadata_t> metadata_;
     FixedUninitVec<Slot> slots_;
 };
+
+} // namespace dnsge

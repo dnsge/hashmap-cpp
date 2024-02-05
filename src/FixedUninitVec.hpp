@@ -6,6 +6,15 @@
 #include <memory>
 #include <new>
 
+namespace dnsge {
+
+/**
+ * @brief A fixed-length, dynamically allocated vector of T. Elements are not 
+ * initialized nor destructed automatically -- users must take care to keep track
+ * of which elements need to be destructed.
+ * 
+ * @tparam T 
+ */
 template <typename T>
 class FixedUninitVec {
 public:
@@ -50,3 +59,5 @@ private:
     size_t size_;
     std::unique_ptr<T> data_;
 };
+
+} // namespace dnsge
