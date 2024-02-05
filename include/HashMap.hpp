@@ -170,6 +170,15 @@ public:
     }
 
     /**
+     * @brief Check whether a key is present in the HashMap.
+     * 
+     * @param key Key to look for.
+     */
+    bool contains(const K &key) const {
+        return this->doFind(key).has_value();
+    }
+
+    /**
      * @brief Get the value of a key in the HashMap. Throws std::out_of_range if
      * the key is not in the HashMap.
      *

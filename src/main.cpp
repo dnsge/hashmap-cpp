@@ -374,6 +374,43 @@ TEST(HashMap, InsertionSemantics) {
     ASSERT_EQ(keyValue2.second, "");
 }
 
+TEST(HashMap, Contains) {
+    HashMap<int, std::string, IntHasher> map;
+    ASSERT_FALSE(map.contains(5));
+    map.insert({5, "abc"});
+    ASSERT_TRUE(map.contains(5));
+    map.erase(5);
+    ASSERT_FALSE(map.contains(5));
+}
+
+TEST(HashMap, InsertionCollision) {
+    struct IdentityIntHasher {
+        size_t operator()(int x) const {
+            return static_cast<size_t>(x);
+        }
+    };
+
+    HashMap<int, std::string, IdentityIntHasher> map(10);
+
+    map.insert({1, "Hello"});
+    map.insert({11, "World"});
+    map.insert({21, "Wow"});
+
+    ASSERT_TRUE(map.contains(1));
+    ASSERT_TRUE(map.contains(11));
+    ASSERT_TRUE(map.contains(21));
+
+    map.erase(11);
+
+    // Key 1 and Key 21 should still be found
+    ASSERT_TRUE(map.contains(1));
+    ASSERT_TRUE(map.contains(21));
+
+    map.insert({2, "two"});
+    ASSERT_TRUE(map.contains(1));
+    ASSERT_TRUE(map.contains(21));
+}
+
 int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
