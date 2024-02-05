@@ -172,11 +172,11 @@ public:
             this->growAndRehash();
         }
         // Perform the insert
-        return iteratorAt(this->insertUnchecked(value));
+        return iteratorAt(this->insertUnchecked(std::move(value)));
     }
 
-    template <typename = std::enable_if_t<std::is_default_constructible_v<V>>>
-    V &operator[](const K &key) {
+    template <typename U = V>
+    typename std::enable_if_t<std::is_default_constructible_v<U>, V &> operator[](const K &key) {
         auto res = this->doFind(key);
         if (res) {
             return this->slots_[res.value()].second;
@@ -236,20 +236,16 @@ public:
         return this->size_;
     }
 
+    size_t capacity() const {
+        return this->capacity_;
+    }
+
     bool empty() const {
         return this->size_ == 0;
     }
 
-    inline iterator begin() {
-        return iteratorAt(0);
-    }
-
     inline iterator end() {
         return iteratorAt(this->slots_.size());
-    }
-
-    inline const_iterator begin() const {
-        return iteratorAt(0);
     }
 
     inline const_iterator end() const {
@@ -357,6 +353,9 @@ private:
 
     // Performs a find. Returns index to found slot.
     std::optional<size_t> doFind(const K &key) const {
+        if (this->empty()) {
+            return std::nullopt;
+        }
         Hash hasher;
         Eq eq;
         size_t hash = hasher(key);
@@ -428,6 +427,7 @@ private:
             }
         }
 
+        assert(this->size_ == 0);
         // Swap internals with temporary table
         *this = std::move(newTable);
     }
