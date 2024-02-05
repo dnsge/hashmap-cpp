@@ -362,6 +362,18 @@ TEST(HashMap, MoveCount) {
     ASSERT_EQ(moveCount, 1UL);         // should have moved the one element
 }
 
+TEST(HashMap, InsertionSemantics) {
+    HashMap<int, std::string, IntHasher> map;
+    std::pair<int, std::string> keyValue1{5, "Hello"};
+    std::pair<int, std::string> keyValue2{10, "World"};
+
+    map.insert(keyValue1);
+    map.insert(std::move(keyValue2));
+
+    ASSERT_EQ(keyValue1.second, "Hello");
+    ASSERT_EQ(keyValue2.second, "");
+}
+
 int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
