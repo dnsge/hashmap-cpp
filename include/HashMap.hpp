@@ -53,6 +53,7 @@ class HashMap {
 public:
     static constexpr size_t DefaultInitialCapacity = 16;
     static constexpr float MaxLoadFactor = 0.875;
+    static constexpr float MaxDeletedLoadFactor = 0.875;
     static constexpr float GrowthFactor = 2;
 
     using Slot = std::pair<const K, V>;
@@ -203,7 +204,7 @@ public:
     std::optional<iterator> insert(const std::pair<K, V> &value) {
         // Check if we need to grow
         if (this->needRehashBeforeInsertion()) {
-            this->growAndRehash();
+            this->growOrRehash();
         }
         // Perform the insert
         return this->insertUnchecked(value);
@@ -219,7 +220,7 @@ public:
     std::optional<iterator> insert(std::pair<K, V> &&value) {
         // Check if we need to grow
         if (this->needRehashBeforeInsertion()) {
-            this->growAndRehash();
+            this->growOrRehash();
         }
         // Perform the insert
         return this->insertUnchecked(std::move(value));
@@ -304,10 +305,11 @@ public:
      * @param n Number of slots to reserve.
      */
     void reserve(size_t n) {
-        if (this->capacity_ >= n) {
+        auto target = static_cast<size_t>(n / MaxLoadFactor);
+        if (this->capacity_ >= target) {
             return;
         }
-        this->growAndRehash(n);
+        this->growAndRehash(target);
     }
 
     /**
@@ -518,6 +520,17 @@ private:
         }
     }
 
+    void growOrRehash() {
+        size_t effectiveSize = this->effectiveSize();
+        if ((float)this->deletedCount_ / effectiveSize > MaxDeletedLoadFactor) {
+            // A lot of capacity is being used by deleted slots, rehash everything
+            this->rehashEverything();
+        } else {
+            // Capacity is limited due to elements, grow AND rehash everything
+            this->growAndRehash();
+        }
+    }
+
     /**
      * @brief Double the capacity and rehash the table.
      */
@@ -590,9 +603,9 @@ private:
     }
 
     /**
-     * @brief Compute the current load factor.
+     * @brief Compute the current effective load factor.
      */
-    float loadFactor() const {
+    float effectiveLoadFactor() const {
         return ((float)this->effectiveSize()) / this->capacity_;
     }
 
@@ -600,7 +613,7 @@ private:
      * @brief Compute the load factor after an insertion.
      */
     float loadFactorAfterInsertion() const {
-        return ((float)(this->effectiveSize() + 1)) / this->capacity_;
+        return ((float)(this->size_ + 1)) / this->capacity_;
     }
 
     /**
@@ -608,7 +621,7 @@ private:
      */
     bool needRehash() const {
         static_assert(MaxLoadFactor <= 1);
-        return this->loadFactor() >= MaxLoadFactor || this->capacity_ == 0;
+        return this->effectiveLoadFactor() >= MaxLoadFactor || this->capacity_ == 0;
     }
 
     /**
