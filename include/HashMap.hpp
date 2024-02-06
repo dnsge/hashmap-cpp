@@ -53,7 +53,7 @@ class HashMap {
 public:
     static constexpr size_t DefaultInitialCapacity = 16;
     static constexpr float MaxLoadFactor = 0.875;
-    static constexpr float MaxDeletedLoadFactor = 0.5;
+    static constexpr float GrowthFactor = 2;
 
     using Slot = std::pair<const K, V>;
 
@@ -202,7 +202,7 @@ public:
      */
     std::optional<iterator> insert(const std::pair<K, V> &value) {
         // Check if we need to grow
-        if (this->needToGrowForInsert()) {
+        if (this->needRehashBeforeInsertion()) {
             this->growAndRehash();
         }
         // Perform the insert
@@ -218,7 +218,7 @@ public:
      */
     std::optional<iterator> insert(std::pair<K, V> &&value) {
         // Check if we need to grow
-        if (this->needToGrowForInsert()) {
+        if (this->needRehashBeforeInsertion()) {
             this->growAndRehash();
         }
         // Perform the insert
@@ -522,7 +522,7 @@ private:
      * @brief Double the capacity and rehash the table.
      */
     void growAndRehash() {
-        size_t newCapacity = this->capacity_ * 2;
+        size_t newCapacity = static_cast<size_t>(this->capacity_ * GrowthFactor);
         if (this->capacity_ == 0) {
             newCapacity = DefaultInitialCapacity;
         }
@@ -585,26 +585,37 @@ private:
         *this = std::move(newTable);
     }
 
+    size_t effectiveSize() const {
+        return this->size_ + this->deletedCount_;
+    }
+
     /**
      * @brief Compute the current load factor.
      */
     float loadFactor() const {
-        return ((float)this->size_) / this->capacity_;
+        return ((float)this->effectiveSize()) / this->capacity_;
     }
 
     /**
-     * @brief Check whether the load factor is too high and we must grow for insert.
+     * @brief Compute the load factor after an insertion.
      */
-    bool needToGrowForInsert() const {
-        return this->loadFactor() >= MaxLoadFactor || this->size_ == this->capacity_;
+    float loadFactorAfterInsertion() const {
+        return ((float)(this->effectiveSize() + 1)) / this->capacity_;
     }
 
     /**
-     * @brief Check whether we need to rehash due to high number of deleted elements.
+     * @brief Check whether the load factor is too high and we need to rehash.
      */
     bool needRehash() const {
-        // We have a high number of deleted elements relative to non-deleted elements.
-        return this->deletedCount_ >= (this->size_ * MaxDeletedLoadFactor);
+        static_assert(MaxLoadFactor <= 1);
+        return this->loadFactor() >= MaxLoadFactor || this->capacity_ == 0;
+    }
+
+    /**
+     * @brief Check whether the load factor will be too high after an insertion.
+     */
+    bool needRehashBeforeInsertion() const {
+        return this->loadFactorAfterInsertion() >= MaxLoadFactor || this->capacity_ == 0;
     }
 
     size_t capacity_;

@@ -386,7 +386,7 @@ TEST(HashMap, Contains) {
 TEST(HashMap, InsertionCollision) {
     struct IdentityIntHasher {
         size_t operator()(int x) const {
-            return static_cast<size_t>(x);
+            return static_cast<size_t>(x) << 7;
         }
     };
 
